@@ -34,7 +34,8 @@ import colorama
 FAKE_AP_MAC  = "aa:bb:cc:dd:ee:ff"
 
 # recv() timeout, in seconds
-RECV_TIMEOUT = 10
+RECV_TIMEOUT = 1
+found_channel = False
 
 def skip_testmode(callee):
     """Decorator to skip invokation of some members when testmode is enabled."""
@@ -132,6 +133,7 @@ class WifiDriver:
     def waitForBeacon(self):
         """Waits for a 802.11 beacon from an AP with our SSID."""
         global RECV_TIMEOUT
+        global found_channel
 
         if self.testmode:
             return FAKE_AP_MAC
@@ -143,30 +145,34 @@ class WifiDriver:
         starttime = time.time()
 
         while not beacon:
-            p = sniff(count=1, timeout=3.0)[0]
-                # Check if beacon comes from the AP we want to connect to               
-            if p.haslayer(Dot11Elt) and p.getlayer(Dot11Elt).info == self.ssid:
-                beacon = True
-                mac = p.addr3
-                self.log("Beacon from SSID=[%s] found (MAC=[%s])" % (self.ssid, mac))
-                return mac
+            if found_channel is True:
+	            p = sniff(count=1, timeout=RECV_TIMEOUT)[0]
+	            if p is None or len(p) == 0 or (time.time() - starttime) > self.tping:
+	                # Timeout!
+	                raise WiExceptionTimeout("waitForBeacon() timeout exceeded!")
+	                # Check if beacon comes from the AP we want to connect to               
+	            if p.haslayer(Dot11Elt) and p.getlayer(Dot11Elt).info == self.ssid:
+	                beacon = True
+	                mac = p.addr3
+	                self.log("Beacon from SSID=[%s] found (MAC=[%s])" % (self.ssid, mac))
+	                return mac
 
-
-            for channel in range(1, 14):
-                os.system("iwconfig " + conf.iface + " channel " + str(channel))
-                self.log("Channel " + str(channel))
-                rx = sniff(count=10, timeout=RECV_TIMEOUT)
-                for p in rx:
-                    if p is None or len(p) == 0 or (time.time() - starttime) > self.tping:
-                        # Timeout!
-                        raise WiExceptionTimeout("waitForBeacon() timeout exceeded!")
-                    # Check if beacon comes from the AP we want to connect to    			
-                    if p.haslayer(Dot11Elt) and p.getlayer(Dot11Elt).info == self.ssid:
-                        beacon = True
-                        mac = p.addr3
-                        self.log("Beacon from SSID=[%s] found (MAC=[%s])" % (self.ssid, mac))
-
-                        return mac
+            if found_channel is False:
+                for channel in range(1, 14):
+                    os.system("iwconfig " + conf.iface + " channel " + str(channel))
+                    self.log("Channel " + str(channel))
+                    rx = sniff(count=10, timeout=RECV_TIMEOUT)
+                    for p in rx:
+                        if p is None or len(p) == 0 or (time.time() - starttime) > self.tping:
+                            # Timeout!
+                            raise WiExceptionTimeout("waitForBeacon() timeout exceeded!")
+                        # Check if beacon comes from the AP we want to connect to    			
+                        if p.haslayer(Dot11Elt) and p.getlayer(Dot11Elt).info == self.ssid:
+                            beacon = True
+                            mac = p.addr3
+                            self.log("Beacon from SSID=[%s] found (MAC=[%s])" % (self.ssid, mac))
+                            found_channel = True
+                            return mac
         return mac
 
     def testcaseStart(self):
@@ -221,7 +227,7 @@ class WifiDriver:
 
                 sys.stdout.write(colorama.Back.GREEN + "Progress: "+ str(npkts) + " ["+str(float(npkts-index_offset)*100.0/check_interval)+"%]," 
                 + " Fuzztype: " + fuzztype[idx] + colorama.Back.RESET + '\r')
-                #sys.stdout.flush()
+                sys.stdout.flush()
 
             # Stop this test-case
             tc = self.testcaseStop()
@@ -249,7 +255,7 @@ class WifiDriver:
     def waitForPacket(self, condition):
         r = None
         while True:
-            p = sniff(count=1, timeout=20)[0]
+            p = sniff(count=1, timeout=3)[0]
             if p is None or len(p) == 0:
                 break
                 
