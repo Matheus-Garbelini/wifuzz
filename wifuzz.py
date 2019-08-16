@@ -1,3 +1,4 @@
+#!/usr/bin/python
 #!env python
 
 # Copyright notice
@@ -37,6 +38,7 @@ import getopt
 from scapy.config import *
 from scapy.utils import *
 from scapy.all import get_if_raw_hwaddr
+from scapy.packet import fuzz
 conf.verb=0
 
 from   common   import log, WiExceptionTimeout

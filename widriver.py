@@ -19,19 +19,22 @@
 import random
 import tempfile
 import time
+import os
 from types import ClassType
 
-from scapy.sendrecv import sniff
+from scapy.sendrecv import sniff, sendp, srp, srp1
 from scapy.layers.dot11 import *
-
+from scapy.utils import wrpcap
+from scapy.config import *
 from common import log, WiExceptionTimeout
 import wifuzzers
+import colorama
 
 # This fake MAC address is used as the AP MAC when "test mode" is enabled
 FAKE_AP_MAC  = "aa:bb:cc:dd:ee:ff"
 
 # recv() timeout, in seconds
-RECV_TIMEOUT = 20
+RECV_TIMEOUT = 10
 
 def skip_testmode(callee):
     """Decorator to skip invokation of some members when testmode is enabled."""
@@ -56,6 +59,7 @@ class WifiDriver:
         self.verbose   = verbose                   # Verbosity level
         self.tc        = []                        # Test-case packets
         self.testmode  = testmode
+        colorama.init(autoreset=True)  # Colors autoreset
 
     def finalizePacket(self, p):
         """Finalize a packet (in place), before sending it on the wire."""
@@ -75,19 +79,23 @@ class WifiDriver:
 
     def send(self, p, recv = False):
         """Send out a packet and optionally read back a reply."""
-        self.finalizePacket(p)
-        self.tc.append(p)
 
+        self.finalizePacket(p)
+        #print(colorama.Fore.CYAN + "TX ---> " + p.summary()[11:])
+        self.tc.append(p)
         if self.testmode:
             print repr(p)
             r = None
         elif not recv:
             sendp(p)
             r = None
-        else:
+        else:            
             r = srp1(p, timeout=RECV_TIMEOUT)
             if r is None:
                 raise WiExceptionTimeout("recv() timeout exceeded!")
+            else:
+                #print(colorama.Fore.CYAN + 'RX <--- ' + r.summary())
+                pass
 
         return r
 
@@ -108,7 +116,7 @@ class WifiDriver:
         # 2. Authentication request (open system)
         p = RadioTap()/Dot11()/Dot11Auth(algo="open", seqnum=1)
         r = self.send(p, recv = True)
-        assert r.haslayer(Dot11Auth) and r.getlayer(Dot11Auth).status == 0
+        #assert r.haslayer(Dot11Auth) and r.getlayer(Dot11Auth).status == 0
 
     @skip_testmode
     def associate(self):
@@ -119,7 +127,7 @@ class WifiDriver:
         p = RadioTap()/Dot11()/Dot11AssoReq(cap="short-slot+ESS+privacy+short-preamble", listen_interval=5)/\
             Dot11Elt(ID='SSID', info=self.ssid)/Dot11Elt(ID='Rates', info="\x82\x84\x0b\x16")
         r = self.send(p, recv = True)
-        assert r.haslayer(Dot11AssoResp) and r.getlayer(Dot11AssoResp).status == 0
+        #assert r.haslayer(Dot11AssoResp) and r.getlayer(Dot11AssoResp).status == 0
 
     def waitForBeacon(self):
         """Waits for a 802.11 beacon from an AP with our SSID."""
@@ -135,18 +143,30 @@ class WifiDriver:
         starttime = time.time()
 
         while not beacon:
-            p = sniff(count=1, timeout=RECV_TIMEOUT)[0]
-
-            if p is None or len(p) == 0 or (time.time() - starttime) > self.tping:
-                # Timeout!
-                raise WiExceptionTimeout("waitForBeacon() timeout exceeded!")
-
-            # Check if beacon comes from the AP we want to connect to
+            p = sniff(count=1, timeout=3.0)[0]
+                # Check if beacon comes from the AP we want to connect to               
             if p.haslayer(Dot11Elt) and p.getlayer(Dot11Elt).info == self.ssid:
                 beacon = True
                 mac = p.addr3
                 self.log("Beacon from SSID=[%s] found (MAC=[%s])" % (self.ssid, mac))
+                return mac
 
+
+            for channel in range(1, 14):
+                os.system("iwconfig " + conf.iface + " channel " + str(channel))
+                self.log("Channel " + str(channel))
+                rx = sniff(count=10, timeout=RECV_TIMEOUT)
+                for p in rx:
+                    if p is None or len(p) == 0 or (time.time() - starttime) > self.tping:
+                        # Timeout!
+                        raise WiExceptionTimeout("waitForBeacon() timeout exceeded!")
+                    # Check if beacon comes from the AP we want to connect to    			
+                    if p.haslayer(Dot11Elt) and p.getlayer(Dot11Elt).info == self.ssid:
+                        beacon = True
+                        mac = p.addr3
+                        self.log("Beacon from SSID=[%s] found (MAC=[%s])" % (self.ssid, mac))
+
+                        return mac
         return mac
 
     def testcaseStart(self):
@@ -166,16 +186,19 @@ class WifiDriver:
             fuzztypes[o.getName()] = o
 
         fuzzset = []
-        for f in set(fuzztype.split(",")):
+        fuzztype = fuzztype.split(",")
+        for f in set(fuzztype):
             assert f in fuzztypes, "[!] Unknown fuzz type '%s'" % f
             fuzzer = fuzztypes[f](self)
             fuzzset.append(fuzzer)
-
+        self.log("Fuzztype: " + str(fuzztype))
         assert len(fuzzset) > 0
 
         alldone = False
         roundz = 0
         npkts = 0
+        index_offset = 0
+
         while not alldone:
             roundz += 1
             # Send out check_interval packets
@@ -183,18 +206,22 @@ class WifiDriver:
 
             # Start this test-case
             self.testcaseStart()
-
-            for i in range(check_interval):
+            index_offset = npkts
+            for i in range(check_interval):                
                 npkts += 1
-
                 # Choose a random element within the set of active fuzzers
-                fuzzer = random.choice(fuzzset)
+                idx = random.choice(range(len(fuzzset)))
+                fuzzer = fuzzset[idx]
 
                 try:
                     fuzzer.fuzz()
                 except WiExceptionTimeout, e:
                     self.log("[R%.5d] %s (packet #%d)" % (roundz, e.msg, npkts))
                     break
+
+                sys.stdout.write(colorama.Back.GREEN + "Progress: "+ str(npkts) + " ["+str(float(npkts-index_offset)*100.0/check_interval)+"%]," 
+                + " Fuzztype: " + fuzztype[idx] + colorama.Back.RESET + '\r')
+                #sys.stdout.flush()
 
             # Stop this test-case
             tc = self.testcaseStop()

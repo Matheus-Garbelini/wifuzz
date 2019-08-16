@@ -18,7 +18,9 @@
 
 from scapy.layers.dot11 import *
 from scapy.layers.l2    import *
-
+from scapy.layers.eap import *
+from scapy.packet import fuzz, Raw
+import random
 from common  import log
 
 WIFI_STATE_NONE          = 0
@@ -61,6 +63,7 @@ class WifiFuzzer:
 
     def fuzz(self):
         # Move into the target 802.11 state...
+        #print('[!] State: ' + state_to_name(self.state))
         if self.state == WIFI_STATE_PROBED:
             self.driver.probe()
         elif self.state == WIFI_STATE_AUTHENTICATED:
@@ -176,7 +179,8 @@ class WifiFuzzerEAPOL(WifiFuzzer):
         # EAPOL packet type
         if random.randint(1, 4) != 1:
             # Use a valid EAPOL packet type with 0.75 probability
-            typez = random.choice(["EAP_PACKET", "START", "LOGOFF", "KEY", "ASF"])
+            typez = random.choice(["EAP-Packet", "EAPOL-Start", "EAPOL-Logoff", "EAPOL-Key", "EAPOL-Encapsulated-ASF-Alert", 
+                "EAPOL-MKA", "EAPOL-Announcement (Generic)", "EAPOL-Announcement (Specific)", "EAPOL-Announcement-Req"])
         else:
             typez = random.randint(0, 255)
 
