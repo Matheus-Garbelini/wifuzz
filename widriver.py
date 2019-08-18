@@ -29,12 +29,12 @@ from scapy.config import *
 from common import log, WiExceptionTimeout
 import wifuzzers
 import colorama
-
+# conf.sniff_promisc = False
 # This fake MAC address is used as the AP MAC when "test mode" is enabled
 FAKE_AP_MAC  = "aa:bb:cc:dd:ee:ff"
 
 # recv() timeout, in seconds
-RECV_TIMEOUT = 1
+RECV_TIMEOUT = 5
 found_channel = False
 
 def skip_testmode(callee):
@@ -93,7 +93,7 @@ class WifiDriver:
         else:            
             r = srp1(p, timeout=RECV_TIMEOUT)
             if r is None:
-                raise WiExceptionTimeout("recv() timeout exceeded!")
+                raise WiExceptionTimeout("srp1() timeout exceeded!")
             else:
                 #print(colorama.Fore.CYAN + 'RX <--- ' + r.summary())
                 pass
@@ -145,34 +145,17 @@ class WifiDriver:
         starttime = time.time()
 
         while not beacon:
-            if found_channel is True:
-	            p = sniff(count=1, timeout=RECV_TIMEOUT)[0]
-	            if p is None or len(p) == 0 or (time.time() - starttime) > self.tping:
-	                # Timeout!
-	                raise WiExceptionTimeout("waitForBeacon() timeout exceeded!")
-	                # Check if beacon comes from the AP we want to connect to               
-	            if p.haslayer(Dot11Elt) and p.getlayer(Dot11Elt).info == self.ssid:
-	                beacon = True
-	                mac = p.addr3
-	                self.log("Beacon from SSID=[%s] found (MAC=[%s])" % (self.ssid, mac))
-	                return mac
-
-            if found_channel is False:
-                for channel in range(1, 14):
-                    os.system("iwconfig " + conf.iface + " channel " + str(channel))
-                    self.log("Channel " + str(channel))
-                    rx = sniff(count=10, timeout=RECV_TIMEOUT)
-                    for p in rx:
-                        if p is None or len(p) == 0 or (time.time() - starttime) > self.tping:
-                            # Timeout!
-                            raise WiExceptionTimeout("waitForBeacon() timeout exceeded!")
-                        # Check if beacon comes from the AP we want to connect to    			
-                        if p.haslayer(Dot11Elt) and p.getlayer(Dot11Elt).info == self.ssid:
-                            beacon = True
-                            mac = p.addr3
-                            self.log("Beacon from SSID=[%s] found (MAC=[%s])" % (self.ssid, mac))
-                            found_channel = True
-                            return mac
+            p = sniff(count=1, timeout=RECV_TIMEOUT)[0]
+            if p is None or len(p) == 0 or (time.time() - starttime) > self.tping:
+                # Timeout!
+                #raise WiExceptionTimeout("waitForBeacon() timeout exceeded!")
+                found_channel = False
+                # Check if beacon comes from the AP we want to connect to               
+            if p.haslayer(Dot11Elt) and p.getlayer(Dot11Elt).info == self.ssid:
+                beacon = True
+                mac = p.addr3
+                self.log("Beacon from SSID=[%s] found (MAC=[%s])" % (self.ssid, mac))
+                return mac
         return mac
 
     def testcaseStart(self):
